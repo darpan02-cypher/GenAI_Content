@@ -168,6 +168,7 @@ class PythonHelpBot:
     # (the gpt-oss models on this account also reject reasoning_format="raw").
     REASONING_FORMAT = None      # e.g. "parsed", "raw", "hidden"
     INCLUDE_REASONING = True     # must stay None while REASONING_FORMAT is set
+    #REASONING_EFFORT = "low"  # e.g. "low", "medium", "high" (gpt-oss) or "none", "default" (qwen3.6)
 
     # NOTE: valid reasoning_effort values differ by model family -- gpt-oss models
     # require "low"/"medium"/"high" while qwen3.6 requires "none"/"default". Rather
