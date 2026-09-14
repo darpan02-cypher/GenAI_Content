@@ -149,26 +149,44 @@ class PythonHelpBot:
     # a reasoning model: openai/gpt-oss-20b, openai/gpt-oss-120b,
     # openai/gpt-oss-safeguard-20b, or qwen/qwen3-32b.
     # See available models here: https://console.groq.com/playground
-    MODEL_A = "llama-3.3-70b-versatile"  # TODO: Meta Llama 3.3 (70B): Strong general-purpose flagship chat model
-    MODEL_B = "llama-3.1-8b-instant"  # TODO:  Meta Llama 3.1 (8B): Lightweight, high-speed model for contrast against 70B
-    MODEL_C = "openai/gpt-oss-20b"  # TODO: OpenAI GPT-OSS (20B): Required reasoning-focused open-weight model
-    MODEL_D = "qwen/qwen3-32b"  # TODO: Alibaba Qwen3 (32B): High-capability open reasoning model for architectural variety
-    EVALUATOR_MODEL = "llama-3.3-70b-versatile"  # TODO: Meta Llama 3.3 (70B): Acts as the LLM-as-judge to evaluate and rank outputs
+    # NOTE: llama-3.3-70b-versatile, llama-3.1-8b-instant, and qwen/qwen3-32b have
+    # been decommissioned from Groq's catalog (confirmed via GET /openai/v1/models).
+    # Swapped in currently available models below.
+    MODEL_A = "openai/gpt-oss-120b"  # Reasoning-focused flagship (120B) open-weight model
+    MODEL_B = "groq/compound-mini"  # Lightweight/fast model for contrast against the 120B flagship
+    MODEL_C = "openai/gpt-oss-20b"  # Required reasoning-focused open-weight model
+    MODEL_D = "qwen/qwen3.6-27b"  # Alibaba Qwen3 reasoning model for architectural variety
+    EVALUATOR_MODEL = "openai/gpt-oss-120b"  # Acts as the LLM-as-judge to evaluate and rank outputs
 
     # TODO: If you want to try different reasoning settings for a reasoning model,
     # you can set defaults here (or None to omit them entirely). See:
     # https://console.groq.com/docs/reasoning
-    REASONING_EFFORT = "medium"      # e.g. "low", "medium", "high"
-    REASONING_FORMAT = "raw"      # e.g. "parsed", "raw", "hidden"
-    INCLUDE_REASONING = True     # e.g. True / False
-    
+    #
+    # NOTE: reasoning_format and include_reasoning are mutually exclusive on Groq's
+    # API ("cannot specify both `include_reasoning` and `reasoning_format`") -- only
+    # set one of the two. We use include_reasoning and leave reasoning_format unset
+    # (the gpt-oss models on this account also reject reasoning_format="raw").
+    REASONING_FORMAT = None      # e.g. "parsed", "raw", "hidden"
+    INCLUDE_REASONING = True     # must stay None while REASONING_FORMAT is set
+
+    # NOTE: valid reasoning_effort values differ by model family -- gpt-oss models
+    # require "low"/"medium"/"high" while qwen3.6 requires "none"/"default". Rather
+    # than one shared value, each reasoning model gets its own supported effort (or
+    # None to omit the kwarg entirely).
+    REASONING_EFFORT_BY_MODEL = {
+        "openai/gpt-oss-20b": "medium",
+        "openai/gpt-oss-120b": "medium",
+        "openai/gpt-oss-safeguard-20b": "medium",
+        "qwen/qwen3.6-27b": "default",
+    }
+
         # Set of model names that support the reasoning_* kwargs. Used by query_model()
-    # to decide whether to forward REASONING_EFFORT/REASONING_FORMAT/INCLUDE_REASONING.
+    # to decide whether to forward REASONING_FORMAT/INCLUDE_REASONING/reasoning_effort.
     REASONING_MODELS = {
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-safeguard-20b",
-        "qwen/qwen3-32b",
+        "qwen/qwen3.6-27b",
     }
 
     # Prompting technique options
@@ -257,7 +275,11 @@ User query: {user_query}""",
         print("\nChoose a prompting technique:")
         for key, technique in self.PROMPT_TECHNIQUES.items():
             print(f"{key}. {technique}")
-        print("4. Exit")
+        print(f"{self._exit_choice()}. Exit")
+
+    def _exit_choice(self):
+        """The menu number for 'Exit', placed right after the last technique."""
+        return str(len(self.PROMPT_TECHNIQUES) + 1)
 
     def get_user_input(self, prompt):
         """
@@ -279,15 +301,19 @@ User query: {user_query}""",
             str: Selected prompt technique name, or None if invalid/exit
         """
         self.display_prompt_techniques()
-        choice = self.get_user_input("Enter your choice (1, 2, 3, or 4 to exit): ")
+        exit_choice = self._exit_choice()
+        valid_choices = ", ".join(self.PROMPT_TECHNIQUES.keys())
+        choice = self.get_user_input(
+            f"Enter your choice ({valid_choices}, or {exit_choice} to exit): "
+        )
 
-        if choice == '4':
+        if choice == exit_choice:
             return 'exit'
 
         if choice in self.PROMPT_TECHNIQUES:
             return self.PROMPT_TECHNIQUES[choice]
         else:
-            print("Invalid choice! Please select 1, 2, 3, or 4.")
+            print(f"Invalid choice! Please select {valid_choices}, or {exit_choice}.")
             return None
 
     def get_user_query(self):
@@ -339,7 +365,7 @@ User query: {user_query}""",
             response = self.groq_client.call_llm(
                 model_name,
                 messages,
-                reasoning_effort=self.REASONING_EFFORT,
+                reasoning_effort=self.REASONING_EFFORT_BY_MODEL.get(model_name),
                 reasoning_format=self.REASONING_FORMAT,
                 include_reasoning=self.INCLUDE_REASONING
             )
