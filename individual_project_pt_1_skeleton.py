@@ -2,7 +2,7 @@
 Prompt Engineering Project
 UNCC - Design and Development of Generative AI Applications
 
-Name: <your name here>
+Name: Himanshi Shrivas
 
 """
 
@@ -103,8 +103,34 @@ class GroqClient:
             #   if include_reasoning is not None:
             #       kwargs["include_reasoning"] = include_reasoning
             #   completion = self.client.chat.completions.create(**kwargs)
-
-            pass  # Remove this line when you implement the function
+            #----------------------------start original TODO----------------------------
+            
+            # # We build the kwargs dict conditionally because reasoning_effort /
+            # reasoning_format / include_reasoning are ONLY accepted by reasoning
+            # models (gpt-oss-*, qwen3-32b). Sending them to a plain chat model
+            # (like llama-3.x) raises an API error, so we only add the key if the
+            # caller actually passed a value for it.
+            
+            kwargs = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": 0.7,  # balanced: not fully deterministic, not too random
+            }
+ 
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            if reasoning_format is not None:
+                kwargs["reasoning_format"] = reasoning_format
+            if include_reasoning is not None:
+                kwargs["include_reasoning"] = include_reasoning
+ 
+            completion = self.client.chat.completions.create(**kwargs)
+ 
+            # The actual text answer lives at choices[0].message.content
+            return completion.choices[0].message.content
+            # ----- END ORIGINAL TODO -----
+ 
+            
 
         except Exception as e:
             return f"Error querying the LLM: {e}"
@@ -123,18 +149,27 @@ class PythonHelpBot:
     # a reasoning model: openai/gpt-oss-20b, openai/gpt-oss-120b,
     # openai/gpt-oss-safeguard-20b, or qwen/qwen3-32b.
     # See available models here: https://console.groq.com/playground
-    MODEL_A = ""  # TODO: Add model name here
-    MODEL_B = ""  # TODO: Add model name here
-    MODEL_C = ""  # TODO: Add model name here
-    MODEL_D = ""  # TODO: Add model name here
-    EVALUATOR_MODEL = ""  # TODO: Add evaluator model name here
+    MODEL_A = "llama-3.3-70b-versatile"  # TODO: Meta Llama 3.3 (70B): Strong general-purpose flagship chat model
+    MODEL_B = "llama-3.1-8b-instant"  # TODO:  Meta Llama 3.1 (8B): Lightweight, high-speed model for contrast against 70B
+    MODEL_C = "openai/gpt-oss-20b"  # TODO: OpenAI GPT-OSS (20B): Required reasoning-focused open-weight model
+    MODEL_D = "qwen/qwen3-32b"  # TODO: Alibaba Qwen3 (32B): High-capability open reasoning model for architectural variety
+    EVALUATOR_MODEL = "llama-3.3-70b-versatile"  # TODO: Meta Llama 3.3 (70B): Acts as the LLM-as-judge to evaluate and rank outputs
 
     # TODO: If you want to try different reasoning settings for a reasoning model,
     # you can set defaults here (or None to omit them entirely). See:
     # https://console.groq.com/docs/reasoning
-    REASONING_EFFORT = None      # e.g. "low", "medium", "high"
-    REASONING_FORMAT = None      # e.g. "parsed", "raw", "hidden"
-    INCLUDE_REASONING = None     # e.g. True / False
+    REASONING_EFFORT = "medium"      # e.g. "low", "medium", "high"
+    REASONING_FORMAT = "raw"      # e.g. "parsed", "raw", "hidden"
+    INCLUDE_REASONING = True     # e.g. True / False
+    
+        # Set of model names that support the reasoning_* kwargs. Used by query_model()
+    # to decide whether to forward REASONING_EFFORT/REASONING_FORMAT/INCLUDE_REASONING.
+    REASONING_MODELS = {
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-safeguard-20b",
+        "qwen/qwen3-32b",
+    }
 
     # Prompting technique options
     # TODO: Add at least 3 different prompting techniques total (you can add more than
@@ -142,8 +177,8 @@ class PythonHelpBot:
     PROMPT_TECHNIQUES = {
         "1": "Zero-Shot",
         "2": "Few-Shot",
-        "3": "Chain-of-Thought"
-        # plus any others you want to add
+        "3": "Chain-of-Thought",
+        "4": "Role-Based"  #  additional technique
     }
 
     def __init__(self, groq_client):
@@ -157,21 +192,54 @@ class PythonHelpBot:
 
         # System prompt (added at the start of every conversation)
         # TODO: Customize this system prompt for the Python Help Assistant
-        self.system_prompt = """ """
+        self.system_prompt = (
+            "You are a helpful Python programming assistant for students learning "
+            "to code. Answer clearly and correctly, and keep explanations focused "
+            "on the question asked."
+        )
 
         # TODO: Define your prompt templates here for the Python Help Assistant.
         # Each prompt should include a {user_query} placeholder that will be replaced
         # with the user's question at runtime. Make each technique meaningfully
         # different in how it instructs the model to answer (not just reworded).
         self.prompts = {
-            "Zero-Shot": """TODO: Add your Zero-Shot prompt here
+            "Zero-Shot": """Answer the following Python programming question directly and concisely.
 User query: {user_query}""",
 
-            "Few-Shot": """TODO: Add your Few-Shot prompt here
+            "Few-Shot": """You are answering Python programming questions. Follow the style of these examples:
+ 
+Example 1:
+Q: How do I reverse a list in Python?
+A: Use slicing: `my_list[::-1]` returns a reversed copy without modifying the original.
+```python
+my_list = [1, 2, 3]
+reversed_list = my_list[::-1]
+```
+ 
+Example 2:
+Q: How do I check if a key exists in a dictionary?
+A: Use the `in` keyword, which checks the dictionary's keys.
+```python
+my_dict = {{"a": 1}}
+if "a" in my_dict:
+    print("key exists")
+```
+ 
+Now answer this question in the same style (short explanation + code block):
 User query: {user_query}""",
 
-            "Chain-of-Thought": """TODO: Add your Chain-of-Thought prompt here
-User query: {user_query}"""
+            "Chain-of-Thought": """Think through this Python question step by step before answering.
+First, break down what the question is really asking.
+Then reason through the solution logic step by step.
+Finally, give the complete answer with a code example.
+User query: {user_query}""",
+            # Role-Based (extra technique): assigning the model a specific persona
+        
+            "Role-Based": """You are a senior Python developer mentoring a junior engineer during a code review.
+Explain the answer the way you would to a mentee: clear reasoning, common pitfalls to avoid,
+and a clean code example.
+ 
+User query: {user_query}""",
         }
 
     def display_welcome(self):
@@ -232,8 +300,9 @@ User query: {user_query}"""
         print("\n" + "="*60)
         print("Please enter your Python programming question.")
         # TODO: Add an example question relevant to Python
+        
+        print("Example: 'How do I read a CSV file into a list of dictionaries?'")
         # e.g. print("Example: 'How do I make a for loop?'")
-        print("Example: ")
         print("="*60)
         user_query = self.get_user_input("\nYour query: ")
 
@@ -266,7 +335,16 @@ User query: {user_query}"""
         # TODO: If model_name is a reasoning model, pass the REASONING_EFFORT /
         # REASONING_FORMAT / INCLUDE_REASONING class attributes through to call_llm
         # so you can experiment with those settings. Otherwise call it with defaults.
-        response = self.groq_client.call_llm(model_name, messages)
+        if model_name in self.REASONING_MODELS:
+            response = self.groq_client.call_llm(
+                model_name,
+                messages,
+                reasoning_effort=self.REASONING_EFFORT,
+                reasoning_format=self.REASONING_FORMAT,
+                include_reasoning=self.INCLUDE_REASONING
+            )
+        else:
+            response = self.groq_client.call_llm(model_name, messages)
         return response
 
     def evaluate_responses(self, response_a, response_b, response_c, response_d):
@@ -292,24 +370,30 @@ User query: {user_query}"""
         #   - Which response is better: <A/B/C/D>
         #   - Brief explanation of why: ...
         #   - Key strengths of the winning response: ...
+        
 
-        evaluation_prompt = """add your evaluation prompt here
-Include:
-- Instructions to compare response A, B, C, and D
-- Criteria to evaluate 
-- Request for which response is better (A, B, C, or D)
-
+        evaluation_prompt = """Compare the following four responses (A, B, C, D) to the same Python
+programming question. Evaluate them using these criteria:
+1. Correctness - is the code/explanation technically accurate?
+2. Clarity - is the explanation easy to follow?
+3. Best practices - does it follow good/idiomatic Python style?
+ 
 Response A:
 {response_a}
-
+ 
 Response B:
 {response_b}
-
+ 
 Response C:
 {response_c}
-
+ 
 Response D:
 {response_d}
+ 
+Provide your evaluation in exactly this format:
+- Which response is better: <A/B/C/D>
+- Brief explanation of why: <your reasoning>
+- Key strengths of the winning response: <bullet points>
 """.format(response_a=response_a, response_b=response_b, response_c=response_c, response_d=response_d)
 
         messages = [
@@ -389,8 +473,30 @@ Response D:
         #       -> call self.select_prompt_technique() again and run another round
         #   3. Exit -> print "Goodbye!" and stop
         # Hint: wrap this in a loop so the user can keep choosing options until they exit.
-
-        print("\nGoodbye!\n")
+        while True:
+            print("\nWhat would you like to do next?")
+            print("1. Continue conversation (ask another question, same technique)")
+            print("2. Start new conversation with a different prompting technique")
+            print("3. Exit")
+            choice = self.get_user_input("Enter your choice (1, 2, or 3): ")
+ 
+            if choice == "1":
+                self.run_one_round(prompt_type)
+            elif choice == "2":
+                new_technique = self.select_prompt_technique()
+                if new_technique == 'exit':
+                    print("\nGoodbye!\n")
+                    return
+                if not new_technique:
+                    continue  # invalid selection was already printed; ask again
+                prompt_type = new_technique
+                self.run_one_round(prompt_type)
+            elif choice == "3":
+                print("\nGoodbye!\n")
+                return
+            else:
+                print("Invalid choice! Please select 1, 2, or 3.")
+       
 
 
 # ============================================================================
